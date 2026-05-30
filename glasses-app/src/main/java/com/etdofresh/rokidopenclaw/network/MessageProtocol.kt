@@ -3,6 +3,9 @@ package com.etdofresh.rokidopenclaw.network
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 // ──────────────────────────────────────────────
 // Outgoing messages (Glasses → Gateway)
@@ -122,6 +125,17 @@ object MessageProtocol {
                 "query_result" -> json.decodeFromJsonElement<QueryResultMessage>(element)
                 "summary_sent" -> json.decodeFromJsonElement<SummarySent>(element)
                 "error" -> json.decodeFromJsonElement<ErrorMsg>(element)
+                
+                // Handle OpenAI Realtime transcription
+                "response.audio_transcript.delta" -> {
+                    val delta = element.jsonObject["delta"]?.jsonPrimitive?.content ?: ""
+                    TranscriptionDelta(text = delta, isFinal = false)
+                }
+                "response.audio_transcript.done" -> {
+                    val transcript = element.jsonObject["transcript"]?.jsonPrimitive?.content ?: ""
+                    TranscriptionDelta(text = transcript, isFinal = true)
+                }
+                
                 else -> null
             }
         } catch (e: Exception) {

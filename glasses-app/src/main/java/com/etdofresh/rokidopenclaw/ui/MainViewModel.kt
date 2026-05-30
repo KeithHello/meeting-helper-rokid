@@ -31,6 +31,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
+
 /**
  * Immutable snapshot of the HUD UI state, combining all sub-states into one data class.
  */
@@ -90,6 +93,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var queryClearJob: Job? = null
     private var summaryClearJob: Job? = null
     private var statusUpdateJob: Job? = null
+    
+    // ── Transcript tracking ───────────────────────────────
+    private val fullTranscript = java.lang.StringBuilder()
 
     // ── Init ──────────────────────────────────────────────
 
@@ -97,10 +103,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         audioCapture = AudioCaptureService(application)
 
         val gatewayUrl = prefs.getString(KEY_GATEWAY_URL, null)
-            ?: application.getString(R.string.gateway_default_url)
+            ?: "wss://api.openai.com/v1/realtime?model=gpt-realtime-2"
+            
+        val apiKey = com.etdofresh.rokidopenclaw.BuildConfig.OPENAI_API_KEY
 
-        // Connect to Gateway
-        gatewayConnection.connect(gatewayUrl)
+        // Connect to Gateway / OpenAI Realtime
+        gatewayConnection.connect(gatewayUrl, apiKey)
 
         // Observe connection state changes
         viewModelScope.launch {
@@ -164,7 +172,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setGatewayUrl(url: String) {
         prefs.edit().putString(KEY_GATEWAY_URL, url).apply()
         gatewayConnection.disconnect()
-        gatewayConnection.connect(url)
+        val apiKey = com.etdofresh.rokidopenclaw.BuildConfig.OPENAI_API_KEY
+        gatewayConnection.connect(url, apiKey)
     }
 
     /** Returns the currently configured Gateway URL (from prefs or default). */
@@ -181,10 +190,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        fullTranscript.clear()
         sessionManager.startMeeting()
 
-        // Notify Gateway of meeting start
+        // Notify Gateway of meeting start / Configure OpenAI Realtime session
         viewModelScope.launch {
+            // Update OpenAI session to enable audio transcription
+            val sessionConfig = """
+                {
+                    "type": "session.update",
+                    "session": {
+                        "modalities": ["text", "audio"],
+                        "instructions": "You are a helpful meeting assistant. The user is streaming meeting audio.",
+                        "input_audio_format": "pcm16",
+                        "input_audio_transcription": {
+                            "model": "whisper-1"
+                        }
+                    }
+                }
+            """.trimIndent()
+            gatewayConnection.sendRaw(sessionConfig)
+            
+            // Still send the legacy start message for backwards compatibility if needed
             gatewayConnection.send(
                 MeetingStartMessage(timestamp = System.currentTimeMillis()),
             )
@@ -194,6 +221,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         audioCollectionJob = viewModelScope.launch {
             audioCapture.audioFlow.collect { frame ->
                 val encoded = AudioEncoder.encodeToBase64(frame)
+                
+                // Send raw OpenAI realtime event
+                val audioEvent = """
+                    {
+                        "type": "input_audio_buffer.append",
+                        "audio": "$encoded"
+                    }
+                """.trimIndent()
+                gatewayConnection.sendRaw(audioEvent)
+                
+                // Still send legacy frame for backwards compatibility
                 gatewayConnection.send(
                     AudioFrame(
                         data = encoded,
@@ -214,6 +252,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         audioCapture.stop()
 
         if (duration > 0) {
+            val transcriptText = fullTranscript.toString()
+            if (transcriptText.isNotBlank()) {
+                generateSummary(transcriptText)
+            }
+            
             viewModelScope.launch {
                 gatewayConnection.send(
                     MeetingEndMessage(
@@ -226,6 +269,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sessionManager.reset()
         }
     }
+    
+    private fun generateSummary(transcript: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val apiKey = com.etdofresh.rokidopenclaw.BuildConfig.OPENAI_API_KEY
+                
+                // Escape transcript for JSON
+                val escapedTranscript = transcript
+                    .replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    
+                val json = """
+                    {
+                        "model": "gpt-5.4",
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": "You are a helpful assistant. Summarize the following meeting transcript into 1-3 short bullet points. Be extremely concise. Reply in the same language as the meeting."
+                            },
+                            {
+                                "role": "user",
+                                "content": "$escapedTranscript"
+                            }
+                        ]
+                    }
+                """.trimIndent()
+                
+                val mediaType = "application/json".toMediaType()
+                val requestBody = json.toRequestBody(mediaType)
+                val request = okhttp3.Request.Builder()
+                    .url("https://api.openai.com/v1/chat/completions")
+                    .addHeader("Authorization", "Bearer ${"$"}apiKey")
+                    .addHeader("Content-Type", "application/json")
+                    .post(requestBody)
+                    .build()
+                    
+                val response = com.etdofresh.rokidopenclaw.RokidOpenClawApp.httpClient.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+                
+                if (response.isSuccessful) {
+                    val root = org.json.JSONObject(responseBody)
+                    val summary = root.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
+                    
+                    _uiState.update { it.copy(queryResult = QueryResultMessage(items = summary.split("\n").filter { it.isNotBlank() })) }
+                    
+                    // Auto-dismiss after 10 seconds
+                    queryClearJob?.cancel()
+                    queryClearJob = viewModelScope.launch {
+                        delay(10000L)
+                        _uiState.update { it.copy(queryResult = null) }
+                    }
+                } else {
+                    android.util.Log.e("MeetingHelper/VM", "Summary failed: ${"$"}responseBody")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MeetingHelper/VM", "Summary error", e)
+            }
+        }
+    }
 
     // ── Gateway message listener ──────────────────────────
 
@@ -234,11 +338,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             gatewayConnection.incomingMessages.collect { message ->
                 when (message) {
                     is TranscriptionDelta -> {
-                        // Per spec: log only, no HUD update for transcriptions
+                        // Log the transcription
                         android.util.Log.d(
                             "MeetingHelper/VM",
                             "Transcription${if (message.isFinal) " [FINAL]" else ""}: ${message.text}",
                         )
+                        
+                        // Append to full transcript if it's a final segment
+                        if (message.isFinal && message.text.isNotBlank()) {
+                            fullTranscript.append(message.text).append(" ")
+                        }
+                        
+                        // Update HUD with subtitle text
+                        if (message.text.isNotBlank()) {
+                            _uiState.update { it.copy(queryResult = QueryResultMessage(items = listOf(message.text))) }
+                            
+                            // Auto-dismiss subtitles after 4 seconds of silence
+                            queryClearJob?.cancel()
+                            queryClearJob = launch {
+                                delay(4000L)
+                                _uiState.update { it.copy(queryResult = null) }
+                            }
+                        }
                     }
 
                     is QueryResultMessage -> {

@@ -59,13 +59,19 @@ class GatewayClient {
      * Opens a WebSocket connection to [url].
      * Sets state to CONNECTING immediately; transitions to CONNECTED on success.
      */
-    fun connect(url: String) {
+    fun connect(url: String, apiKey: String? = null) {
         disconnect(code = 1000, reason = "reconnect")
         _connectionState.value = ConnectionState.CONNECTING
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(url)
-            .build()
+            
+        if (apiKey != null) {
+            requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+            requestBuilder.addHeader("OpenAI-Beta", "realtime=v1")
+        }
+            
+        val request = requestBuilder.build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
 
@@ -99,6 +105,14 @@ class GatewayClient {
                 _connectionState.value = ConnectionState.ERROR
             }
         })
+    }
+
+    /**
+     * Sends a raw string over the WebSocket.
+     */
+    fun sendRaw(json: String): Boolean {
+        val ws = webSocket ?: return false
+        return ws.send(json)
     }
 
     /**

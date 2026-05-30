@@ -57,22 +57,9 @@ class LoaderActivity : ComponentActivity() {
     ) {
         onState(LoaderUiState.Checking)
 
-        val release = UpdateChecker.checkLatestRelease()
-        if (release == null) {
-            // No internet or API error — launch what we have
-            launchCurrent()
-            return
-        }
-
-        val currentVersion = prefs.getString(KEY_LOADED_VERSION, getCurrentAppVersion()) ?: "0.0.0"
-
-        if (UpdateChecker.isNewer(currentVersion, release.version) && release.downloadUrl != null) {
-            onRelease(release)
-            onState(LoaderUiState.UpdateAvailable(release.version))
-        } else {
-            // Already up to date
-            launchCurrent()
-        }
+        // Disable remote update checking during development to prevent crashes or unexpected exits
+        // We'll just launch the built-in app directly
+        launchCurrent()
     }
 
     private suspend fun downloadAndLaunch(release: ReleaseInfo, onState: (LoaderUiState) -> Unit) {

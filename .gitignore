@@ -52,3 +52,11 @@ ehthumbs.db
 # CMake
 .externalNativeBuild/
 cmake-build-*/
+
+# WorkBuddy
+.workbuddy/
+
+# Logs
+**/adb_log*.txt
+**/app_log.txt
+test-openai-ws.js

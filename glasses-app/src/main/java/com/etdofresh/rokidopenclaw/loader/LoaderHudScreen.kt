@@ -136,7 +136,7 @@ fun LoaderHudScreen(
 
                     if (state.progress >= 0f) {
                         LinearProgressIndicator(
-                            progress = { state.progress },
+                            progress = state.progress,
                             modifier = Modifier.fillMaxWidth(0.7f),
                             color = HudGreen,
                             trackColor = HudDimGreen.copy(alpha = 0.3f)

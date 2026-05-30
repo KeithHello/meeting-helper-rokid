@@ -6,6 +6,10 @@ import com.etdofresh.rokidopenclaw.network.MeetingEndMessage
 import com.etdofresh.rokidopenclaw.network.MeetingStartMessage
 import com.etdofresh.rokidopenclaw.network.MessageProtocol
 import com.etdofresh.rokidopenclaw.network.QuickQueryMessage
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -209,7 +213,7 @@ class MessageProtocolTest {
         assertNotNull(parsed)
         val reSerialized = MessageProtocol.json.encodeToString(
             com.etdofresh.rokidopenclaw.network.IncomingMessage.serializer(),
-            parsed
+            parsed!!
         )
         // Re-parse and verify consistency
         val reParsed = MessageProtocol.parseIncoming(reSerialized)

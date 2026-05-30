@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
-    id("com.android.application") version "8.2.2"
+    id("com.android.application") version "8.4.2"
     id("org.jetbrains.kotlin.android") version "1.9.22"
     kotlin("plugin.serialization") version "1.9.22"
+}
+
+// Load local.properties for API keys
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.inputStream())
 }
 
 android {
@@ -14,14 +23,27 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        
+        // Expose API Key to BuildConfig
+        buildConfigField(
+            "String", 
+            "OPENAI_API_KEY", 
+            "\"${localProperties.getProperty("OPENAI_API_KEY", "")}\""
+        )
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
@@ -31,7 +53,9 @@ android {
 
 dependencies {
     // Jetpack Compose
-    implementation(platform("androidx.compose:compose-bom:2024.01.00"))
+    // Downgraded BOM to 2023.10.01 to fix NoSuchMethodError on YodaOS (Android Go) 
+    // related to LinearProgressIndicator animations
+    implementation(platform("androidx.compose:compose-bom:2023.10.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")

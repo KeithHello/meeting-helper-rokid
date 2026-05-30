@@ -43,15 +43,17 @@ class GatewayConnection {
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
     private var currentUrl: String? = null
+    private var currentApiKey: String? = null
 
     /**
      * Connects to [url] with automatic reconnection on failure.
      * Resets the retry counter.
      */
-    fun connect(url: String) {
+    fun connect(url: String, apiKey: String? = null) {
         currentUrl = url
+        currentApiKey = apiKey
         reconnectAttempts = 0
-        client.connect(url)
+        client.connect(url, apiKey)
         startReconnectWatcher(url)
     }
 
@@ -70,6 +72,12 @@ class GatewayConnection {
      * @return true if the message was queued successfully
      */
     fun send(message: OutgoingMessage): Boolean = client.send(message)
+    
+    /**
+     * Sends a raw JSON string through the underlying client.
+     * @return true if the message was queued successfully
+     */
+    fun sendRaw(json: String): Boolean = client.sendRaw(json)
 
     // ── Internal ───────────────────────────────────────────
 
@@ -87,7 +95,7 @@ class GatewayConnection {
                             "Reconnect attempt $reconnectAttempts in ${backoff}ms",
                         )
                         delay(backoff)
-                        client.connect(urlStillValid)
+                        client.connect(urlStillValid, currentApiKey)
                     }
                 }
                 if (state == ConnectionState.CONNECTED) {
