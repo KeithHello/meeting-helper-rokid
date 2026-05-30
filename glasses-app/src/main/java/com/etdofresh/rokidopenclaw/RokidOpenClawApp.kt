@@ -3,7 +3,9 @@ package com.etdofresh.rokidopenclaw
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Intent
 import android.os.Build
+import com.etdofresh.rokidopenclaw.service.MeetingForegroundService
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -50,6 +52,11 @@ class RokidOpenClawApp : Application() {
             )
             defaultHandler?.uncaughtException(thread, throwable)
         }
+
+        // Start foreground service early to keep process alive on Android Go
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(Intent(this, MeetingForegroundService::class.java))
+        }
     }
 
     private fun createNotificationChannel() {
@@ -57,7 +64,7 @@ class RokidOpenClawApp : Application() {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 getString(R.string.notif_channel_name),
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Meeting Helper foreground service notification"
                 setShowBadge(false)

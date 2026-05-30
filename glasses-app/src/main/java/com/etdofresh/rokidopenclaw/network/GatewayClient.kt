@@ -68,7 +68,6 @@ class GatewayClient {
             
         if (apiKey != null) {
             requestBuilder.addHeader("Authorization", "Bearer $apiKey")
-            requestBuilder.addHeader("OpenAI-Beta", "realtime=v1")
         }
             
         val request = requestBuilder.build()

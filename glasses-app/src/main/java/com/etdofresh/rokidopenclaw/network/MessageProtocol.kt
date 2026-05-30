@@ -113,6 +113,16 @@ object MessageProtocol {
     }
 
     /**
+     * Separate Json instance for outgoing serialization.
+     * Uses a different discriminator name to avoid conflict with the
+     * `type` property on [OutgoingMessage] subclasses.
+     */
+    private val outgoingJson: Json = Json {
+        encodeDefaults = true
+        classDiscriminator = "_msgtype"
+    }
+
+    /**
      * Parses a raw JSON string into an [IncomingMessage].
      * Returns `null` if the JSON is malformed or the type is unrecognised.
      */
@@ -126,7 +136,16 @@ object MessageProtocol {
                 "summary_sent" -> json.decodeFromJsonElement<SummarySent>(element)
                 "error" -> json.decodeFromJsonElement<ErrorMsg>(element)
                 
-                // Handle OpenAI Realtime transcription
+                // Handle OpenAI GA Realtime transcription (GA event names)
+                "conversation.item.input_audio_transcription.delta" -> {
+                    val delta = element.jsonObject["delta"]?.jsonPrimitive?.content ?: ""
+                    TranscriptionDelta(text = delta, isFinal = false)
+                }
+                "conversation.item.input_audio_transcription.completed" -> {
+                    val transcript = element.jsonObject["transcript"]?.jsonPrimitive?.content ?: ""
+                    TranscriptionDelta(text = transcript, isFinal = true)
+                }
+                // Handle OpenAI Realtime transcription (beta event names)
                 "response.audio_transcript.delta" -> {
                     val delta = element.jsonObject["delta"]?.jsonPrimitive?.content ?: ""
                     TranscriptionDelta(text = delta, isFinal = false)
@@ -134,6 +153,19 @@ object MessageProtocol {
                 "response.audio_transcript.done" -> {
                     val transcript = element.jsonObject["transcript"]?.jsonPrimitive?.content ?: ""
                     TranscriptionDelta(text = transcript, isFinal = true)
+                }
+                // VAD events (for debugging)
+                "input_audio_buffer.speech_started" -> {
+                    android.util.Log.i("MeetingHelper/Gateway", "VAD: speech started")
+                    null
+                }
+                "input_audio_buffer.speech_stopped" -> {
+                    android.util.Log.i("MeetingHelper/Gateway", "VAD: speech stopped")
+                    null
+                }
+                "response.done" -> {
+                    android.util.Log.d("MeetingHelper/Gateway", "Response done")
+                    null
                 }
                 
                 else -> null
@@ -146,7 +178,7 @@ object MessageProtocol {
     /**
      * Serialises an [OutgoingMessage] to its JSON string representation.
      */
-    fun serializeOutgoing(msg: OutgoingMessage): String = json.encodeToString(
+    fun serializeOutgoing(msg: OutgoingMessage): String = outgoingJson.encodeToString(
         OutgoingMessage.serializer(),
         msg,
     )

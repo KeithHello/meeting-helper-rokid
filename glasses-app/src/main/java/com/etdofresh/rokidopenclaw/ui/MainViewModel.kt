@@ -54,8 +54,9 @@ data class HudUiState(
  *
  * ## Lifecycle
  * - `init {}`: reads Gateway URL from SharedPreferences, connects, starts listeners
- * - `onLongPress()`: toggles meeting recording (start / stop + summary request)
- * - `onDoubleTap()`: sends a [QuickQueryMessage] during active recording
+ * - `toggleRecording()`: toggles meeting recording (start / stop + summary request)
+ * - `quickQuery()`: sends a [QuickQueryMessage] during active recording
+ * - `endMeeting()`: stops meeting if currently recording (no toggle)
  * - `setGatewayUrl(url)`: persists URL, disconnects + reconnects
  *
  * ## Incoming Message Dispatching
@@ -103,7 +104,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         audioCapture = AudioCaptureService(application)
 
         val gatewayUrl = prefs.getString(KEY_GATEWAY_URL, null)
-            ?: "wss://api.openai.com/v1/realtime?model=gpt-realtime-2"
+            ?: "wss://api.openai.com/v1/realtime?model=gpt-realtime-1.5"
             
         val apiKey = com.etdofresh.rokidopenclaw.BuildConfig.OPENAI_API_KEY
 
@@ -139,11 +140,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── Public API ────────────────────────────────────────
 
     /**
-     * Long-press gesture handler: toggles meeting recording.
+     * Single-click gesture handler: toggles meeting recording.
      * - Idle/Error → start meeting, send [MeetingStartMessage], begin audio streaming
      * - Recording → stop meeting, send [MeetingEndMessage], request summary
      */
-    fun onLongPress() {
+    fun toggleRecording() {
+        android.util.Log.i("MeetingHelper/VM", "toggleRecording() — currently recording: ${sessionManager.isRecording}")
         if (sessionManager.isRecording) {
             stopMeeting()
         } else {
@@ -152,17 +154,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Double-tap gesture handler: sends a quick Q&A query during an active meeting.
+     * Two-finger swipe forward gesture handler: sends a quick Q&A query during an active meeting.
      * Silently ignored if not currently recording.
      */
-    fun onDoubleTap() {
-        if (!sessionManager.isRecording) return
+    fun quickQuery() {
+        android.util.Log.i("MeetingHelper/VM", "quickQuery() — recording: ${sessionManager.isRecording}")
+        if (!sessionManager.isRecording) {
+            android.util.Log.w("MeetingHelper/VM", "quickQuery() — ignored, not recording")
+            return
+        }
 
         viewModelScope.launch {
             gatewayConnection.send(
                 QuickQueryMessage(timestamp = System.currentTimeMillis()),
             )
         }
+    }
+
+    /**
+     * Two-finger swipe back gesture handler: ends the current meeting if one is active.
+     * This is a stop-only operation (no toggle). Silently ignored if not recording.
+     */
+    fun endMeeting() {
+        android.util.Log.i("MeetingHelper/VM", "endMeeting() — recording: ${sessionManager.isRecording}")
+        if (!sessionManager.isRecording) {
+            android.util.Log.w("MeetingHelper/VM", "endMeeting() — ignored, not recording")
+            return
+        }
+        stopMeeting()
     }
 
     /**
@@ -185,7 +204,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── Meeting lifecycle ─────────────────────────────────
 
     private fun startMeeting() {
+        android.util.Log.i("MeetingHelper/VM", "startMeeting() called")
         if (!audioCapture.hasPermission()) {
+            android.util.Log.e("MeetingHelper/VM", "startMeeting() — no mic permission!")
             _uiState.update { it.copy(errorMessage = "Mic permission required") }
             return
         }
@@ -200,21 +221,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 {
                     "type": "session.update",
                     "session": {
-                        "modalities": ["text", "audio"],
-                        "instructions": "You are a helpful meeting assistant. The user is streaming meeting audio.",
-                        "input_audio_format": "pcm16",
-                        "input_audio_transcription": {
-                            "model": "whisper-1"
+                        "type": "realtime",
+                        "instructions": "You are a helpful meeting assistant. TRANSCRIBE and RESPOND in English ONLY, regardless of what language the speaker uses. Summarize meetings in concise English bullet points.",
+                        "audio": {
+                            "input": {
+                                "transcription": {
+                                    "model": "whisper-1",
+                                    "language": "en"
+                                }
+                            }
                         }
                     }
                 }
             """.trimIndent()
             gatewayConnection.sendRaw(sessionConfig)
-            
-            // Still send the legacy start message for backwards compatibility if needed
-            gatewayConnection.send(
-                MeetingStartMessage(timestamp = System.currentTimeMillis()),
-            )
         }
 
         // Start audio capture and push loop
@@ -231,13 +251,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 """.trimIndent()
                 gatewayConnection.sendRaw(audioEvent)
                 
-                // Still send legacy frame for backwards compatibility
-                gatewayConnection.send(
-                    AudioFrame(
-                        data = encoded,
-                        timestamp = System.currentTimeMillis(),
-                    ),
-                )
                 sessionManager.incrementFrameCount()
             }
         }
@@ -255,15 +268,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val transcriptText = fullTranscript.toString()
             if (transcriptText.isNotBlank()) {
                 generateSummary(transcriptText)
-            }
-            
-            viewModelScope.launch {
-                gatewayConnection.send(
-                    MeetingEndMessage(
-                        durationSeconds = duration,
-                        timestamp = System.currentTimeMillis(),
-                    ),
-                )
             }
         } else {
             sessionManager.reset()
@@ -288,7 +292,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "messages": [
                             {
                                 "role": "system",
-                                "content": "You are a helpful assistant. Summarize the following meeting transcript into 1-3 short bullet points. Be extremely concise. Reply in the same language as the meeting."
+                                "content": "You are a helpful assistant. Summarize the following meeting transcript into 1-3 short bullet points in English. Be extremely concise."
                             },
                             {
                                 "role": "user",
