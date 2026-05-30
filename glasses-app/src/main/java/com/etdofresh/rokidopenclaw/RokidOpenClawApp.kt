@@ -1,14 +1,69 @@
 package com.etdofresh.rokidopenclaw
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 /**
- * Application class for Rokid OpenClaw.
+ * Application class for the Meeting Helper on Rokid AI Glasses.
+ *
+ * Initializes the notification channel for the foreground service
+ * and provides a shared OkHttpClient singleton for WebSocket communication.
  */
 class RokidOpenClawApp : Application() {
+
+    companion object {
+        const val NOTIFICATION_CHANNEL_ID = "meeting_channel"
+
+        /**
+         * Shared OkHttpClient singleton used by GatewayClient for WebSocket connections.
+         * Configured with 30s connect/read/write timeouts suitable for real-time audio streaming.
+         */
+        lateinit var httpClient: OkHttpClient
+            private set
+    }
+
     override fun onCreate() {
         super.onCreate()
-        // TODO: Initialize dependency injection / service locator
-        // TODO: Set up WebSocket connection manager
+
+        // Create the notification channel for foreground service (required on API 26+)
+        createNotificationChannel()
+
+        // Initialize shared OkHttpClient
+        httpClient = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)  // No read timeout for streaming WebSocket
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+
+        // Set default uncaught exception handler for crash diagnostics
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            android.util.Log.e(
+                "MeetingHelper/Crash",
+                "Uncaught exception on thread ${thread.name}: ${throwable.message}",
+                throwable
+            )
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                getString(R.string.notif_channel_name),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Meeting Helper foreground service notification"
+                setShowBadge(false)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
     }
 }

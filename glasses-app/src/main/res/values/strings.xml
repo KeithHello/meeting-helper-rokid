@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Rokid OpenClaw</string>
+    <string name="app_name">Meeting Helper</string>
+    <string name="gateway_default_url">ws://192.168.1.100:8080/ws</string>
+    <string name="notif_channel_name">Meeting Helper</string>
+    <string name="notif_recording">Recording in progress…</string>
+    <string name="notif_standby">Meeting Helper — Ready</string>
 </resources>

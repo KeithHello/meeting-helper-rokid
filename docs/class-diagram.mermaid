@@ -1,0 +1,179 @@
+classDiagram
+    %% ===== 协议消息 =====
+    class OutgoingMessage {
+        <<sealed>>
+    }
+    class AudioFrame {
+        +type: String = "audio_frame"
+        +data: String
+        +timestamp: Long
+    }
+    class MeetingStartMessage {
+        +type: String = "meeting_start"
+        +timestamp: Long
+    }
+    class MeetingEndMessage {
+        +type: String = "meeting_end"
+        +timestamp: Long
+        +durationSeconds: Int
+    }
+    class QuickQueryMessage {
+        +type: String = "quick_query"
+        +timestamp: Long
+    }
+
+    class IncomingMessage {
+        <<sealed>>
+    }
+    class TranscriptionDelta {
+        +type: String = "transcription_delta"
+        +text: String
+        +isFinal: Boolean
+    }
+    class QueryResultMessage {
+        +type: String = "query_result"
+        +items: List~String~
+    }
+    class SummarySent {
+        +type: String = "summary_sent"
+        +documentId: String
+    }
+    class ErrorMsg {
+        +type: String = "error"
+        +code: String
+        +message: String
+    }
+
+    OutgoingMessage <|-- AudioFrame
+    OutgoingMessage <|-- MeetingStartMessage
+    OutgoingMessage <|-- MeetingEndMessage
+    OutgoingMessage <|-- QuickQueryMessage
+    IncomingMessage <|-- TranscriptionDelta
+    IncomingMessage <|-- QueryResultMessage
+    IncomingMessage <|-- SummarySent
+    IncomingMessage <|-- ErrorMsg
+
+    %% ===== 会话状态 =====
+    class SessionState {
+        <<sealed>>
+    }
+    class SessionIdle
+    class SessionRecording {
+        +startTime: Long
+        +audioFrameCount: Int
+    }
+    class SessionEnding {
+        +startTime: Long
+        +durationSeconds: Int
+    }
+    class SessionError {
+        +message: String
+    }
+    SessionState <|-- SessionIdle
+    SessionState <|-- SessionRecording
+    SessionState <|-- SessionEnding
+    SessionState <|-- SessionError
+
+    %% ===== 连接状态 =====
+    class ConnectionState {
+        <<enum>>
+        DISCONNECTED
+        CONNECTING
+        CONNECTED
+        RECONNECTING
+        ERROR
+    }
+
+    %% ===== ViewModel 状态 =====
+    class HudUiState {
+        +sessionState: SessionState
+        +connectionState: ConnectionState
+        +isRecording: Boolean
+        +wifiEnabled: Boolean
+        +batteryLevel: Int
+        +queryResult: QueryResultMessage?
+        +summarySent: Boolean
+        +errorMessage: String?
+    }
+
+    %% ===== 核心类 =====
+    class SessionManager {
+        -_state: MutableStateFlow~SessionState~
+        +state: StateFlow~SessionState~
+        +isRecording: Boolean
+        +startMeeting()
+        +endMeeting(): Int
+        +reset()
+        +error(message: String)
+        +incrementFrameCount()
+    }
+    class GatewayClient {
+        -_connectionState: MutableStateFlow~ConnectionState~
+        -_incomingMessages: MutableSharedFlow~IncomingMessage~
+        +connectionState: StateFlow~ConnectionState~
+        +incomingMessages: SharedFlow~IncomingMessage~
+        +connect(url: String)
+        +disconnect()
+        +send(message: OutgoingMessage): Boolean
+    }
+    class GatewayConnection {
+        -client: GatewayClient
+        +connectionState: StateFlow~ConnectionState~
+        +incomingMessages: SharedFlow~IncomingMessage~
+        +connect(url: String)
+        +disconnect()
+        +send(msg: OutgoingMessage): Boolean
+        -calculateBackoff(attempt: Int): Long
+    }
+    class AudioCaptureService {
+        +audioFlow: Flow~ByteArray~
+        +hasPermission(): Boolean
+        +start(): Boolean
+        +stop()
+        +release()
+    }
+    class AudioEncoder {
+        +encodeToBase64(pcmData: ByteArray): String
+    }
+    class MainViewModel {
+        -sessionManager: SessionManager
+        -gatewayConnection: GatewayConnection
+        -audioCapture: AudioCaptureService
+        -audioEncoder: AudioEncoder
+        +uiState: StateFlow~HudUiState~
+        +onLongPress()
+        +onDoubleTap()
+        +setGatewayUrl(url: String)
+        +getGatewayUrl(): String
+    }
+    class MeetingForegroundService {
+        +start(context: Context)
+        +stop(context: Context)
+    }
+    class BootReceiver {
+        +onReceive(context, intent)
+    }
+
+    %% ===== UI =====
+    class HudMainScreen
+    class RecordingIndicator
+    class StatusBar
+    class QueryResultOverlay
+    class SettingsScreen
+    class HudTheme
+
+    %% ===== 关系 =====
+    MainViewModel --> SessionManager : owns
+    MainViewModel --> GatewayConnection : owns
+    MainViewModel --> AudioCaptureService : owns
+    MainViewModel --> AudioEncoder : uses
+    MainViewModel --> HudUiState : exposes
+    GatewayConnection --> GatewayClient : wraps
+    SessionManager --> SessionState : manages
+    GatewayClient --> ConnectionState : exposes
+    GatewayClient --> IncomingMessage : receives
+    GatewayClient --> OutgoingMessage : sends
+    AudioCaptureService --> AudioEncoder : pipes to
+    HudMainScreen --> RecordingIndicator : contains
+    HudMainScreen --> StatusBar : contains
+    HudMainScreen --> QueryResultOverlay : contains

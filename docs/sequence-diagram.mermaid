@@ -1,0 +1,74 @@
+sequenceDiagram
+    participant User
+    participant MainActivity
+    participant ViewModel as MainViewModel
+    participant Session as SessionManager
+    participant Audio as AudioCaptureService
+    participant Encoder as AudioEncoder
+    participant GW as GatewayConnection
+    participant Gateway as OpenClaw Gateway
+    participant Email
+
+    Note over MainActivity: 应用启动，WebSocket 已连接
+
+    %% ── 会议开始 ──
+    User->>MainActivity: 长按触控板 1.5s
+    MainActivity->>ViewModel: onLongPress()
+    ViewModel->>Session: startMeeting()
+    Session->>Session: state → Recording
+
+    ViewModel->>GW: send(MeetingStartMessage)
+    GW->>Gateway: {"type":"meeting_start"}
+
+    ViewModel->>Audio: audioFlow.collect()
+    
+    loop 每 100ms
+        Audio-->>ViewModel: ByteArray (3200 bytes)
+        ViewModel->>Encoder: encodeToBase64(pcmChunk)
+        Encoder-->>ViewModel: Base64 string
+        ViewModel->>GW: send(AudioFrame)
+        GW->>Gateway: {"type":"audio_frame","data":"..."}
+    end
+
+    Note over Gateway: Whisper 实时转写<br/>HUD 不显示
+
+    %% ── 快速问答 ──
+    User->>MainActivity: 双击触控板
+    MainActivity->>ViewModel: onDoubleTap()
+    ViewModel->>GW: send(QuickQueryMessage)
+    GW->>Gateway: {"type":"quick_query"}
+    
+    Note over Gateway: 取近30s转录<br/>GPT-5.5 搜索+压缩
+
+    Gateway-->>GW: {"type":"query_result","items":["要点1","要点2"]}
+    GW-->>ViewModel: QueryResultMessage
+    ViewModel->>ViewModel: uiState.queryResult = ...
+    Note over ViewModel: 3s 后自动清除
+
+    %% ── 会议结束 ──
+    User->>MainActivity: 再次长按 1.5s
+    MainActivity->>ViewModel: onLongPress()
+    ViewModel->>Audio: stop()
+    ViewModel->>Session: endMeeting()
+    Session->>Session: state → Ending
+
+    ViewModel->>GW: send(MeetingEndMessage)
+    GW->>Gateway: {"type":"meeting_end","durationSeconds":600}
+
+    Note over Gateway: 完整转录 → GPT-5.5 生成摘要<br/>→ SMTP 发送邮件到 lhjjjk4@gmail.com
+
+    Gateway-->>GW: {"type":"summary_sent","documentId":"doc_abc"}
+    GW-->>ViewModel: SummarySent
+    ViewModel->>Session: reset()
+    ViewModel->>ViewModel: uiState.summarySent = true
+    Note over ViewModel: 2s 后清除标记
+
+    %% ── 断线重连 ──
+    Note over Gateway,GW: ~~~ 网络断开 ~~~
+    Gateway--xGW: onFailure
+    GW->>GW: connectionState = ERROR
+    GW->>GW: delay(backoff_ms)
+    Note over GW: 指数退避: 1s→2s→4s→...→30s
+    GW->>Gateway: 重连 WebSocket
+    Gateway-->>GW: onOpen
+    GW->>GW: connectionState = CONNECTED
